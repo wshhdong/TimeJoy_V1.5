@@ -2,6 +2,13 @@
 import { User, UserRole, TimeLog, ActivityType, SatisfactionTag } from '../types';
 import { DEFAULT_ACTIVITY_TYPES, DEFAULT_SATISFACTION_TAGS, ADMIN_USERNAME, ADMIN_EMAIL } from '../constants';
 
+// --- CONFIGURATION ---
+// Change this to true when deploying to your VM with the PostgreSQL Backend running
+const USE_REAL_BACKEND = false; 
+// The URL of your Node.js server (e.g., http://your-vm-ip:3001/api)
+const API_BASE_URL = 'http://localhost:3001/api'; 
+
+// --- LocalStorage Keys (Legacy/Mock) ---
 const STORAGE_KEYS = {
   USERS: 'timejoy_users',
   LOGS: 'timejoy_logs',
@@ -10,7 +17,7 @@ const STORAGE_KEYS = {
   CURRENT_USER: 'timejoy_current_user_session'
 };
 
-// Initialize Storage with Admin and Defaults if empty
+// --- 1. MOCK BACKEND (LocalStorage) ---
 const initStorage = () => {
   if (!localStorage.getItem(STORAGE_KEYS.USERS)) {
     const adminUser: User = {
@@ -34,26 +41,21 @@ const initStorage = () => {
   }
 };
 
-initStorage();
+if (!USE_REAL_BACKEND) {
+    initStorage();
+}
 
-// Helper to simulate network delay
 const delay = (ms = 300) => new Promise(resolve => setTimeout(resolve, ms));
 
-export const MockBackend = {
-  // Auth
+const MockBackendService = {
   login: async (username: string, email: string): Promise<User | null> => {
     await delay();
     const users: User[] = JSON.parse(localStorage.getItem(STORAGE_KEYS.USERS) || '[]');
-    // Case insensitive check
     const user = users.find(u => u.username.toLowerCase() === username.toLowerCase() && u.email.toLowerCase() === email.toLowerCase());
-    
     if (user) {
       user.lastLoginAt = new Date().toISOString();
-      // Update user in DB
       const updatedUsers = users.map(u => u.id === user.id ? user : u);
       localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(updatedUsers));
-      
-      // Set session
       localStorage.setItem(STORAGE_KEYS.CURRENT_USER, JSON.stringify(user));
       return user;
     }
@@ -63,7 +65,6 @@ export const MockBackend = {
   register: async (username: string, email: string): Promise<User | string> => {
     await delay();
     const users: User[] = JSON.parse(localStorage.getItem(STORAGE_KEYS.USERS) || '[]');
-    
     if (users.some(u => u.username.toLowerCase() === username.toLowerCase())) return "Username already exists";
     if (users.some(u => u.email.toLowerCase() === email.toLowerCase())) return "Email already exists";
 
@@ -93,14 +94,8 @@ export const MockBackend = {
   updateProfile: async (userId: string, newUsername: string, newEmail: string): Promise<{success: boolean, message?: string, user?: User}> => {
       await delay();
       const users: User[] = JSON.parse(localStorage.getItem(STORAGE_KEYS.USERS) || '[]');
-      
-      // Check uniqueness excluding self
-      if (users.some(u => u.username.toLowerCase() === newUsername.toLowerCase() && u.id !== userId)) {
-          return { success: false, message: "Username taken" };
-      }
-      if (users.some(u => u.email.toLowerCase() === newEmail.toLowerCase() && u.id !== userId)) {
-          return { success: false, message: "Email taken" };
-      }
+      if (users.some(u => u.username.toLowerCase() === newUsername.toLowerCase() && u.id !== userId)) return { success: false, message: "Username taken" };
+      if (users.some(u => u.email.toLowerCase() === newEmail.toLowerCase() && u.id !== userId)) return { success: false, message: "Email taken" };
 
       let updatedUser: User | null = null;
       const updatedUsers = users.map(u => {
@@ -119,13 +114,10 @@ export const MockBackend = {
       return { success: false, message: "User not found" };
   },
 
-  // Logs
   getLogs: async (userId?: string): Promise<TimeLog[]> => {
     await delay();
     const logs: TimeLog[] = JSON.parse(localStorage.getItem(STORAGE_KEYS.LOGS) || '[]');
-    if (userId) {
-      return logs.filter(l => l.userId === userId);
-    }
+    if (userId) return logs.filter(l => l.userId === userId);
     return logs;
   },
 
@@ -142,7 +134,6 @@ export const MockBackend = {
     return newLog;
   },
 
-  // Configs
   getActivityTypes: async (): Promise<ActivityType[]> => {
     return JSON.parse(localStorage.getItem(STORAGE_KEYS.ACTIVITY_TYPES) || '[]');
   },
@@ -159,7 +150,6 @@ export const MockBackend = {
     localStorage.setItem(STORAGE_KEYS.SATISFACTION_TAGS, JSON.stringify(tags));
   },
 
-  // Admin
   getAllUsers: async (): Promise<User[]> => {
     await delay();
     return JSON.parse(localStorage.getItem(STORAGE_KEYS.USERS) || '[]');
@@ -203,3 +193,121 @@ export const MockBackend = {
       }
   }
 };
+
+// --- 2. REAL BACKEND (REST API) ---
+// This assumes you have a standard Node/Express backend running at API_BASE_URL
+const RealBackendService = {
+  // Helper for standard Fetch
+  request: async (endpoint: string, method = 'GET', body?: any) => {
+      try {
+        const headers: any = { 'Content-Type': 'application/json' };
+        const res = await fetch(`${API_BASE_URL}${endpoint}`, {
+            method,
+            headers,
+            body: body ? JSON.stringify(body) : undefined
+        });
+        if (!res.ok) {
+            try {
+                const err = await res.json();
+                throw new Error(err.message || 'Request failed');
+            } catch (e) {
+                throw new Error(`Request failed: ${res.statusText}`);
+            }
+        }
+        return await res.json();
+      } catch (err) {
+          console.error("API Error:", err);
+          return null;
+      }
+  },
+
+  login: async (username: string, email: string): Promise<User | null> => {
+    const user = await RealBackendService.request('/login', 'POST', { username, email });
+    if (user) {
+        localStorage.setItem(STORAGE_KEYS.CURRENT_USER, JSON.stringify(user));
+        return user;
+    }
+    return null;
+  },
+
+  register: async (username: string, email: string): Promise<User | string> => {
+    try {
+        const user = await RealBackendService.request('/register', 'POST', { username, email });
+        if (!user) return "Registration failed";
+        return user;
+    } catch (e: any) {
+        return "Username or email likely exists";
+    }
+  },
+
+  logout: async () => {
+    localStorage.removeItem(STORAGE_KEYS.CURRENT_USER);
+  },
+
+  getCurrentUser: (): User | null => {
+    // We still read from local storage for session persistence for the frontend state,
+    // but in a real app you might validate this token with the backend on mount.
+    return JSON.parse(localStorage.getItem(STORAGE_KEYS.CURRENT_USER) || 'null');
+  },
+
+  updateProfile: async (userId: string, newUsername: string, newEmail: string): Promise<{success: boolean, message?: string, user?: User}> => {
+      const res = await RealBackendService.request(`/users/${userId}`, 'PUT', { username: newUsername, email: newEmail });
+      if (res && res.id) {
+          localStorage.setItem(STORAGE_KEYS.CURRENT_USER, JSON.stringify(res));
+          return { success: true, user: res };
+      }
+      return { success: false, message: "Update failed" };
+  },
+
+  getLogs: async (userId?: string): Promise<TimeLog[]> => {
+    const endpoint = userId ? `/logs?userId=${userId}` : '/logs';
+    const logs = await RealBackendService.request(endpoint);
+    return logs || [];
+  },
+
+  addLog: async (log: Omit<TimeLog, 'id' | 'createdAt'>): Promise<TimeLog> => {
+    const res = await RealBackendService.request('/logs', 'POST', log);
+    return res; 
+  },
+
+  getActivityTypes: async (): Promise<ActivityType[]> => {
+      const res = await RealBackendService.request('/config/activity-types');
+      return res || DEFAULT_ACTIVITY_TYPES;
+  },
+
+  updateActivityTypes: async (types: ActivityType[]) => {
+      await RealBackendService.request('/config/activity-types', 'POST', { types });
+  },
+
+  getSatisfactionTags: async (): Promise<SatisfactionTag[]> => {
+      const res = await RealBackendService.request('/config/satisfaction-tags');
+      return res || DEFAULT_SATISFACTION_TAGS;
+  },
+
+  updateSatisfactionTags: async (tags: SatisfactionTag[]) => {
+      await RealBackendService.request('/config/satisfaction-tags', 'POST', { tags });
+  },
+
+  getAllUsers: async (): Promise<User[]> => {
+      const res = await RealBackendService.request('/users');
+      return res || [];
+  },
+
+  resetUserEmail: async (userId: string) => {
+      const res = await RealBackendService.request(`/users/${userId}/reset-email`, 'POST');
+      return !!res;
+  },
+
+  exportDatabase: () => {
+      alert("Export is handled via pg_dump on the server in production mode.");
+      return ""; 
+  },
+
+  importDatabase: (jsonString: string) => {
+      alert("Import is handled via psql on the server in production mode.");
+      return false;
+  }
+};
+
+// --- EXPORT ---
+export const MockBackend = USE_REAL_BACKEND ? RealBackendService : MockBackendService;
