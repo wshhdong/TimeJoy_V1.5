@@ -4,9 +4,18 @@ import { DEFAULT_ACTIVITY_TYPES, DEFAULT_SATISFACTION_TAGS, ADMIN_USERNAME, ADMI
 
 // --- CONFIGURATION ---
 // Change this to true when deploying to your VM with the PostgreSQL Backend running
-const USE_REAL_BACKEND = false; 
-// The URL of your Node.js server (e.g., http://your-vm-ip:3001/api)
-const API_BASE_URL = 'http://localhost:3001/api'; 
+const USE_REAL_BACKEND = true; 
+
+// Automatically detect the API URL based on the current browser location
+// This assumes the backend runs on port 3001 on the same machine
+const getApiBaseUrl = () => {
+    if (typeof window !== 'undefined') {
+        return `http://${window.location.hostname}:3001/api`;
+    }
+    return 'http://localhost:3001/api';
+};
+
+const API_BASE_URL = getApiBaseUrl();
 
 // --- LocalStorage Keys (Legacy/Mock) ---
 const STORAGE_KEYS = {
