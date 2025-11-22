@@ -1,4 +1,3 @@
-
 import { User, UserRole, TimeLog, ActivityType, SatisfactionTag } from '../types';
 import { DEFAULT_ACTIVITY_TYPES, DEFAULT_SATISFACTION_TAGS, ADMIN_USERNAME, ADMIN_EMAIL } from '../constants';
 
@@ -7,7 +6,6 @@ import { DEFAULT_ACTIVITY_TYPES, DEFAULT_SATISFACTION_TAGS, ADMIN_USERNAME, ADMI
 const USE_REAL_BACKEND = true; 
 
 // Automatically detect the API URL based on the current browser location
-// This assumes the backend runs on port 3001 on the same machine
 const getApiBaseUrl = () => {
     if (typeof window !== 'undefined') {
         return `http://${window.location.hostname}:3001/api`;
@@ -206,7 +204,7 @@ const MockBackendService = {
 // --- 2. REAL BACKEND (REST API) ---
 // This assumes you have a standard Node/Express backend running at API_BASE_URL
 const RealBackendService = {
-  // Helper for standard Fetch
+  // Helper for standard Fetch with better error throwing
   request: async (endpoint: string, method = 'GET', body?: any) => {
       try {
         const headers: any = { 'Content-Type': 'application/json' };
@@ -215,37 +213,47 @@ const RealBackendService = {
             headers,
             body: body ? JSON.stringify(body) : undefined
         });
+        
+        // If response is not OK, try to parse the error message from the server
         if (!res.ok) {
+            let errorMessage = `Request failed: ${res.status}`;
             try {
-                const err = await res.json();
-                throw new Error(err.message || 'Request failed');
+                const errData = await res.json();
+                if (errData && errData.message) {
+                    errorMessage = errData.message;
+                }
             } catch (e) {
-                throw new Error(`Request failed: ${res.statusText}`);
+                // Could not parse JSON error, use status text
             }
+            throw new Error(errorMessage);
         }
         return await res.json();
-      } catch (err) {
+      } catch (err: any) {
           console.error("API Error:", err);
-          return null;
+          throw err;
       }
   },
 
   login: async (username: string, email: string): Promise<User | null> => {
-    const user = await RealBackendService.request('/login', 'POST', { username, email });
-    if (user) {
-        localStorage.setItem(STORAGE_KEYS.CURRENT_USER, JSON.stringify(user));
-        return user;
+    try {
+        const user = await RealBackendService.request('/login', 'POST', { username, email });
+        if (user) {
+            localStorage.setItem(STORAGE_KEYS.CURRENT_USER, JSON.stringify(user));
+            return user;
+        }
+        return null;
+    } catch (e) {
+        return null;
     }
-    return null;
   },
 
   register: async (username: string, email: string): Promise<User | string> => {
     try {
         const user = await RealBackendService.request('/register', 'POST', { username, email });
-        if (!user) return "Registration failed";
         return user;
     } catch (e: any) {
-        return "Username or email likely exists";
+        // Return the actual error message (e.g., "Permission denied" or "Duplicate user")
+        return e.message || "Registration failed";
     }
   },
 
@@ -254,24 +262,31 @@ const RealBackendService = {
   },
 
   getCurrentUser: (): User | null => {
-    // We still read from local storage for session persistence for the frontend state,
-    // but in a real app you might validate this token with the backend on mount.
+    // We still read from local storage for session persistence for the frontend state
     return JSON.parse(localStorage.getItem(STORAGE_KEYS.CURRENT_USER) || 'null');
   },
 
   updateProfile: async (userId: string, newUsername: string, newEmail: string): Promise<{success: boolean, message?: string, user?: User}> => {
-      const res = await RealBackendService.request(`/users/${userId}`, 'PUT', { username: newUsername, email: newEmail });
-      if (res && res.id) {
-          localStorage.setItem(STORAGE_KEYS.CURRENT_USER, JSON.stringify(res));
-          return { success: true, user: res };
+      try {
+          const res = await RealBackendService.request(`/users/${userId}`, 'PUT', { username: newUsername, email: newEmail });
+          if (res && res.id) {
+              localStorage.setItem(STORAGE_KEYS.CURRENT_USER, JSON.stringify(res));
+              return { success: true, user: res };
+          }
+          return { success: false, message: "Update failed" };
+      } catch (e: any) {
+          return { success: false, message: e.message };
       }
-      return { success: false, message: "Update failed" };
   },
 
   getLogs: async (userId?: string): Promise<TimeLog[]> => {
-    const endpoint = userId ? `/logs?userId=${userId}` : '/logs';
-    const logs = await RealBackendService.request(endpoint);
-    return logs || [];
+    try {
+        const endpoint = userId ? `/logs?userId=${userId}` : '/logs';
+        const logs = await RealBackendService.request(endpoint);
+        return logs || [];
+    } catch (e) {
+        return [];
+    }
   },
 
   addLog: async (log: Omit<TimeLog, 'id' | 'createdAt'>): Promise<TimeLog> => {
@@ -280,8 +295,12 @@ const RealBackendService = {
   },
 
   getActivityTypes: async (): Promise<ActivityType[]> => {
-      const res = await RealBackendService.request('/config/activity-types');
-      return res || DEFAULT_ACTIVITY_TYPES;
+      try {
+        const res = await RealBackendService.request('/config/activity-types');
+        return res || DEFAULT_ACTIVITY_TYPES;
+      } catch (e) {
+          return DEFAULT_ACTIVITY_TYPES;
+      }
   },
 
   updateActivityTypes: async (types: ActivityType[]) => {
@@ -289,8 +308,12 @@ const RealBackendService = {
   },
 
   getSatisfactionTags: async (): Promise<SatisfactionTag[]> => {
-      const res = await RealBackendService.request('/config/satisfaction-tags');
-      return res || DEFAULT_SATISFACTION_TAGS;
+      try {
+        const res = await RealBackendService.request('/config/satisfaction-tags');
+        return res || DEFAULT_SATISFACTION_TAGS;
+      } catch (e) {
+          return DEFAULT_SATISFACTION_TAGS;
+      }
   },
 
   updateSatisfactionTags: async (tags: SatisfactionTag[]) => {
@@ -298,13 +321,21 @@ const RealBackendService = {
   },
 
   getAllUsers: async (): Promise<User[]> => {
-      const res = await RealBackendService.request('/users');
-      return res || [];
+      try {
+        const res = await RealBackendService.request('/users');
+        return res || [];
+      } catch (e) {
+          return [];
+      }
   },
 
   resetUserEmail: async (userId: string) => {
-      const res = await RealBackendService.request(`/users/${userId}/reset-email`, 'POST');
-      return !!res;
+      try {
+        const res = await RealBackendService.request(`/users/${userId}/reset-email`, 'POST');
+        return !!res;
+      } catch (e) {
+          return false;
+      }
   },
 
   exportDatabase: () => {

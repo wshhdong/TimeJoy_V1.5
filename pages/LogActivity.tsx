@@ -1,9 +1,7 @@
-
 import React, { useState, useEffect } from 'react';
 import { User, ActivityType, SatisfactionTag, TimeLog } from '../types';
 import { MockBackend } from '../services/mockBackend';
 import TimeRangeSlider from '../components/TimeRangeSlider';
-import { format } from 'date-fns';
 
 // Icons
 const ChevronDownIcon = () => (
@@ -28,13 +26,22 @@ const generateTimeOptions = () => {
     return options;
 };
 
+// Helper to get local date string YYYY-MM-DD
+const getTodayString = () => {
+    const d = new Date();
+    const year = d.getFullYear();
+    const month = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+};
+
 export const LogActivity: React.FC<Props> = ({ user, onViewDashboard }) => {
   const [types, setTypes] = useState<ActivityType[]>([]);
   const [tags, setTags] = useState<SatisfactionTag[]>([]);
   const [todayLogs, setTodayLogs] = useState<TimeLog[]>([]);
 
   // Form State
-  const [date, setDate] = useState(format(new Date(), 'yyyy-MM-dd'));
+  const [date, setDate] = useState(getTodayString());
   const [startTime, setStartTime] = useState('09:00');
   const [endTime, setEndTime] = useState('09:30');
   const [selectedType, setSelectedType] = useState<string>('');
@@ -59,7 +66,7 @@ export const LogActivity: React.FC<Props> = ({ user, onViewDashboard }) => {
       if (t.length > 0 && !selectedType) setSelectedType(t[0].id);
       if (s.length > 0 && !selectedTag) setSelectedTag(s[0].id);
 
-      // Smart Defaults only if we are initializing or date changed and no manual override yet (simplified)
+      // Smart Defaults
       setDefaultTimes(l.filter(x => x.date === date));
     };
     init();
@@ -108,7 +115,6 @@ export const LogActivity: React.FC<Props> = ({ user, onViewDashboard }) => {
       return true;
   };
 
-  // Helper to check occupancy for option rendering
   const isTimeOccupied = (timeStr: string) => {
       return todayLogs.some(log => timeStr >= log.startTime && timeStr < log.endTime);
   };
@@ -194,11 +200,6 @@ export const LogActivity: React.FC<Props> = ({ user, onViewDashboard }) => {
                     className="block w-full rounded-md border-gray-300 shadow-sm focus:border-primary focus:ring focus:ring-primary focus:ring-opacity-50 p-2 border bg-white text-gray-900"
                 >
                      {timeOptions.map(t => {
-                        // For end time, strictly speaking, the slot starting at T isn't what matters, 
-                        // but to be consistent with user request "make the time which is occupied... text"
-                        // we reuse the same visual logic or slightly adjusted.
-                        // If 09:00-10:00 is occupied. 09:00 occupied. 09:30 occupied. 10:00 free.
-                        // This helps users avoid picking an end time that cuts INTO an existing task.
                         const occupied = isTimeOccupied(t);
                         return (
                             <option key={t} value={t} className={occupied ? "text-red-400" : ""}>
@@ -216,7 +217,6 @@ export const LogActivity: React.FC<Props> = ({ user, onViewDashboard }) => {
                 startTime={startTime} 
                 endTime={endTime} 
                 occupiedRanges={todayLogs.map(l => {
-                    // Find associated tag to get color
                     const tag = tags.find(t => t.id === l.satisfactionTagId);
                     return { 
                         start: l.startTime, 
@@ -267,7 +267,7 @@ export const LogActivity: React.FC<Props> = ({ user, onViewDashboard }) => {
                         `}
                         style={{ 
                             borderColor: selectedTag === tag.id ? tag.color : 'transparent',
-                            backgroundColor: selectedTag === tag.id ? `${tag.color}1A` : undefined, // 10% opacity hex
+                            backgroundColor: selectedTag === tag.id ? `${tag.color}1A` : undefined,
                         }}
                     >
                         <span className="mr-2 text-xl">{tag.emoji}</span>
